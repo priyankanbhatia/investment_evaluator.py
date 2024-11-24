@@ -1,0 +1,127 @@
+import yfinance as yf
+import numpy as np
+
+# Function to fetch financial data
+def get_financial_data(ticker):
+    try:
+        # Fetch stock data
+        stock = yf.Ticker(ticker)
+
+        # Get quarterly and annual balance sheet data
+        quarterly_balance_sheet = stock.quarterly_balance_sheet
+        annual_balance_sheet = stock.balance_sheet
+
+        # Get company info to extract debt-to-equity ratio
+        info = stock.info
+
+        # Check if the balance sheets are empty
+        if quarterly_balance_sheet.empty and annual_balance_sheet.empty:
+            raise ValueError(f"No balance sheet data available for {ticker}.")
+
+        # Get the most recent date for quarterly and annual data
+        latest_quarter_date = quarterly_balance_sheet.columns[0] if not quarterly_balance_sheet.empty else None
+        latest_annual_date = annual_balance_sheet.columns[0] if not annual_balance_sheet.empty else None
+
+        # Safely retrieve financial metrics from the quarterly balance sheet (if available)
+        quarterly_data = {
+            "cash": (
+                (quarterly_balance_sheet.loc["Cash And Cash Equivalents", latest_quarter_date] 
+                 if latest_quarter_date and "Cash And Cash Equivalents" in quarterly_balance_sheet.index else 0) +
+                (quarterly_balance_sheet.loc["Other Short Term Investments", latest_quarter_date] 
+                 if latest_quarter_date and "Other Short Term Investments" in quarterly_balance_sheet.index else 0)
+            ),
+            "debt": (
+                (quarterly_balance_sheet.loc["Long Term Debt", latest_quarter_date] 
+                 if latest_quarter_date and "Long Term Debt" in quarterly_balance_sheet.index is "--" else 0) +
+                (quarterly_balance_sheet.loc["Current Debt", latest_quarter_date] 
+                 if latest_quarter_date and "Current Debt" in quarterly_balance_sheet.index is "--" else 0)
+            ),
+            "equity": quarterly_balance_sheet.loc["Stockholders Equity", latest_quarter_date] 
+                      if latest_quarter_date and "Stockholders Equity" in quarterly_balance_sheet.index else 0,
+            "Total_debt": quarterly_balance_sheet.loc["Total Debt", latest_quarter_date] 
+                        if latest_quarter_date and "Total Debt" in quarterly_balance_sheet.index else 0,
+            "debt_to_equity": info.get('debtToEquity', None)/100  # Fetch Debt to Equity from the info section
+        }
+
+
+        # Safely retrieve financial metrics from the annual balance sheet (if available)
+        annual_data = {
+            "preferred_stock": annual_balance_sheet.loc["Preferred Stock", latest_annual_date] 
+                               if latest_annual_date and "Preferred Stock" in annual_balance_sheet.index else 0,
+            "treasury_stock": annual_balance_sheet.loc["Treasury Stock", latest_annual_date] 
+                              if latest_annual_date and "Treasury Stock" in annual_balance_sheet.index is "--" else 0,
+            "retained_earnings": list(annual_balance_sheet.loc["Retained Earnings", :]) 
+                                 if latest_annual_date and "Retained Earnings" in annual_balance_sheet.index else []
+        }
+
+        # Combine quarterly and annual data
+        financial_data = {**quarterly_data, **annual_data}
+
+        return financial_data, latest_quarter_date, latest_annual_date
+
+    except ValueError as ve:
+        print(f"Error: {ve}")
+        return None, None
+    except Exception as e:
+        print(f"Error retrieving data for {ticker}: {e}")
+        return None, None
+
+# Function to evaluate the company
+def evaluate_company(data):
+    if data:
+        # Ensure there are at least two years of retained earnings data to compare
+        retained_earnings_growth = False
+        if len(data["retained_earnings"]) >= 2:
+            most_recent_re = data["retained_earnings"][0]  # Most recent year
+            previous_year_re = data["retained_earnings"][1]  # Previous year
+            
+            # Check if retained earnings have grown
+            retained_earnings_growth = most_recent_re > previous_year_re
+
+        results = {
+            "Cash vs Debt": data["cash"] > data["debt"],
+            "Debt-to-Equity < 0.8": data["debt_to_equity"] is not None and data["debt_to_equity"] < 0.8,
+            "No Preferred Stock": data["preferred_stock"] == 0,
+            "Has Treasury Stock": data["treasury_stock"] > 0,
+            "Retained Earnings Growth YoY": retained_earnings_growth
+        }
+        return results
+    return {}
+
+# Function to find the ticker
+def find_ticker(company_name):
+    try:
+        stock = yf.Ticker(company_name)
+        return stock.ticker
+    except Exception as e:
+        print(f"Error finding ticker for {company_name}: {e}")
+        return None
+
+# Main function
+def main():
+    print("Warren Buffett's Investment Principles Evaluator")
+    company_name = input("Enter Company Name or Ticker (e.g., Apple or AAPL): ")
+
+    ticker = find_ticker(company_name)
+    if ticker:
+        print(f"Found Ticker: {ticker}")
+        data, latest_quarter_date, latest_annual_date = get_financial_data(ticker)
+
+        if data:
+            print(f"\nLatest Financial Data for {ticker} (Quarterly Date: {latest_quarter_date}, Annual Date: {latest_annual_date}):")
+            for key, value in data.items():
+                print(f"{key}: {value}")
+
+            # Evaluate based on Buffett's principles
+            results = evaluate_company(data)
+            print("\nEvaluation Results:")
+            for criterion, result in results.items():
+                symbol = "✅" if result else "❌"
+                print(f"{criterion}: {symbol}")
+        else:
+            print("Could not fetch financial data. Please try again.")
+    else:
+        print("Could not find ticker for the given company name. Please try again.")
+
+if __name__ == "__main__":
+    main()
